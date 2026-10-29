@@ -1,0 +1,22 @@
+{
+  "firmware": "7.18.0-143c",
+  "platform": "1.43c",
+  "board": "Waveshare ESP32-S3-Touch-AMOLED-1.43C",
+  "esp32Core": "3.3.10",
+  "flashSize": "8MB",
+  "partition": "default_8MB",
+  "verifiedApplicationOffset": "0x10000",
+  "deviceTested": false,
+  "files": [
+    {
+      "file": "MotoNav_143c_v7.18.0-143c_app_0x10000.bin",
+      "bytes": 2108816,
+      "sha256": "81addc571c0cbb57fdbb5e62ec610892e698d79eb64b9234fb5c61ae4fa9f7d8"
+    },
+    {
+      "file": "MotoNav_143c_v7.18.0-143c_full_0x0.bin",
+      "bytes": 2174352,
+      "sha256": "e2a41ee1fe0d0849a8635d9f2e60b72b60fac7301ba94396c61ea352b3600fc0"
+    }
+  ]
+}
