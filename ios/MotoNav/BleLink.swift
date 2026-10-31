@@ -243,7 +243,9 @@ final class BleLink: NSObject, ObservableObject {
     func sendBulk(type: Int, id: Int, data: Data) {
         guard isReady else { return }
         let payload = maxWrite - BULK_HEADER
-        if payload < 100 { return }                     // 没协商到大数据包就不发
+        // 作者原版用 payload<100 直接丢弃整份地图；iOS 协商到的 ATT MTU 往往只有 ~61 字节，
+        // 安卓显式 requestMtu(517) 后能到 256。放宽到 20：包小一点、慢一点，但能投屏。
+        if payload < 20 { return }                     // 没协商到大数据包就不发
         let parts = (data.count + payload - 1) / payload
         if parts == 0 || parts > 4000 { return }
         let total = data.count
@@ -267,9 +269,27 @@ final class BleLink: NSObject, ObservableObject {
     var bulkPending: Bool { bulkQ.hasData }
     @Published var bulkKB = 0                         // 累计发了多少 KB 地图数据（调试用）
 
+    /// 超长数据（天气/路况/电子眼/歌词等文本指令）自动切片：首字节 0x01=续传、0x00=结束，
+    /// 固件 Bluetooth.h 负责按 0x01/0x00 重组回完整指令。Android 单包大 MTU 不受影响（走下面单包分支）。
+    /// 注意：地图 'M' 包走 bulkQ(sendBulk) 不经过这里，不会被加 0x01/0x00 头，不会干扰固件分包。
     private func enqueue(_ key: String, _ data: Data) {
-        if let i = queue.firstIndex(where: { $0.key == key }) { queue[i].data = data }
-        else { queue.append(Out(key: key, data: data)) }
+        if data.count <= maxWrite {
+            if let i = queue.firstIndex(where: { $0.key == key }) { queue[i].data = data }
+            else { queue.append(Out(key: key, data: data)) }
+            return
+        }
+        let step = max(1, maxWrite - 1)
+        var chunks: [Data] = []
+        var off = 0
+        while off < data.count {
+            let len = min(step, data.count - off)
+            var pkt = Data([off + len >= data.count ? 0x00 : 0x01])
+            pkt.append(data.subdata(in: off..<(off + len)))
+            chunks.append(pkt)
+            off += len
+        }
+        queue.removeAll { $0.key == key }
+        for c in chunks { queue.append(Out(key: key, data: c)) }
     }
 
     private func header(_ slot: Int, _ id: Int, _ part: Int, _ parts: Int, _ w: Int, _ h: Int, _ off: Int) -> Data {
