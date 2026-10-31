@@ -247,7 +247,9 @@ final class BleLink: NSObject, ObservableObject {
     func sendBulk(type: Int, id: Int, data: Data) {
         guard isReady else { return }
         let payload = maxWrite - BULK_HEADER
-        if payload < 100 { return }                     // 没协商到大数据包就不发
+        // v7.20 iOS 协商到的 ATT MTU 往往只有几十字节（安卓显式 requestMtu(517) 后能到 256），
+        // 之前 payload<100 直接丢弃整份地图导致"导航无法投屏"。放宽到 20：包小一点、慢一点，但能投屏。
+        if payload < 20 { return }                      // 没协商到大数据包就不发
         let parts = (data.count + payload - 1) / payload
         if parts == 0 || parts > 4000 { return }
         let total = data.count
@@ -271,9 +273,27 @@ final class BleLink: NSObject, ObservableObject {
     var bulkPending: Bool { bulkQ.hasData }
     @Published var bulkKB = 0                         // 累计发了多少 KB 地图数据（调试用）
 
+    /// 入队一条文字消息。iOS 协商到的 ATT MTU 只有几十字节，安卓能到 256；
+    /// 天气 #W/#WX、路况 #u(最长 480)、电子眼 #c 等可能超过单包上限，CoreBluetooth 会静默丢弃。
+    /// 超过时切成 MTU 大小的片：首字节 0x01=续传、0x00=结束，固件负责拼回完整指令（安卓仍是单包，不受影响）。
     private func enqueue(_ key: String, _ data: Data) {
-        if let i = queue.firstIndex(where: { $0.key == key }) { queue[i].data = data }
-        else { queue.append(Out(key: key, data: data)) }
+        if data.count <= maxWrite {
+            if let i = queue.firstIndex(where: { $0.key == key }) { queue[i].data = data }
+            else { queue.append(Out(key: key, data: data)) }
+            return
+        }
+        let step = max(1, maxWrite - 1)
+        var chunks: [Data] = []
+        var off = 0
+        while off < data.count {
+            let len = min(step, data.count - off)
+            var pkt = Data([off + len >= data.count ? 0x00 : 0x01])
+            pkt.append(data.subdata(in: off..<(off + len)))
+            chunks.append(pkt)
+            off += len
+        }
+        queue.removeAll { $0.key == key }
+        for c in chunks { queue.append(Out(key: key, data: c)) }
     }
 
     private func header(_ slot: Int, _ id: Int, _ part: Int, _ parts: Int, _ w: Int, _ h: Int, _ off: Int) -> Data {
